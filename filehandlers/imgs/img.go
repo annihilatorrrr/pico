@@ -79,8 +79,6 @@ func (h *UploadImgHandler) metaImg(data *PostMetaData) error {
 
 	img, err := opt.GetImage(tee, data.MimeType)
 	finalName := data.Filename
-	fmt.Println(finalName)
-	fmt.Println(data.MimeType)
 	if errors.Is(err, shared.IsSvg) {
 		h.Cfg.Logger.Infof("(%s) is svg, skipping encoding", data.Filename)
 		finalName = data.Filename

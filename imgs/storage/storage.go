@@ -89,6 +89,7 @@ func (s *StorageFS) UpsertBucket(name string) (Bucket, error) {
 }
 
 func (s *StorageFS) GetFile(bucket Bucket, fname string) (ReaderAtCloser, error) {
+	fmt.Println(fname)
 	dat, err := os.Open(path.Join(bucket.Path, fname))
 	if err != nil {
 		return nil, err
