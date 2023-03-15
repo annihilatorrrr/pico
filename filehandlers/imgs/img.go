@@ -78,8 +78,16 @@ func (h *UploadImgHandler) metaImg(data *PostMetaData) error {
 	contents := &bytes.Buffer{}
 
 	img, err := opt.GetImage(tee, data.MimeType)
-	if errors.Is(err, shared.AlreadyWebP) {
+	finalName := data.Filename
+	fmt.Println(finalName)
+	fmt.Println(data.MimeType)
+	if errors.Is(err, shared.IsSvg) {
+		h.Cfg.Logger.Infof("(%s) is svg, skipping encoding", data.Filename)
+		finalName = data.Filename
+		webpReader = tee
+	} else if errors.Is(err, shared.AlreadyWebP) {
 		h.Cfg.Logger.Infof("(%s) is already webp, skipping encoding", data.Filename)
+		finalName = fmt.Sprintf("%s.webp", shared.SanitizeFileExt(finalName))
 		webpReader = tee
 	} else if err != nil {
 		return err
@@ -98,7 +106,7 @@ func (h *UploadImgHandler) metaImg(data *PostMetaData) error {
 
 	_, err = h.Storage.PutFile(
 		bucket,
-		fmt.Sprintf("%s.webp", shared.SanitizeFileExt(data.Filename)),
+		finalName,
 		storage.NopReaderAtCloser(webpReader),
 	)
 	if err != nil {

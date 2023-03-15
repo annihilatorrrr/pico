@@ -101,6 +101,7 @@ func GetRatio(dimes string) (*Ratio, error) {
 }
 
 var AlreadyWebP = errors.New("image is already webp")
+var IsSvg = errors.New("image is an svg")
 
 func (h *ImgOptimizer) GetImage(r io.Reader, mimeType string) (image.Image, error) {
 	switch mimeType {
@@ -112,6 +113,10 @@ func (h *ImgOptimizer) GetImage(r io.Reader, mimeType string) (image.Image, erro
 		return jpeg.Decode(r)
 	case "image/gif":
 		return gif.Decode(r)
+	case "image/svg+xml":
+	case "text/xml":
+	case "text/xml; charset=utf-8":
+		return nil, IsSvg
 	case "image/webp":
 		return nil, AlreadyWebP
 	}
