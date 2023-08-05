@@ -44,10 +44,15 @@ func (h *handler) Read(path string) (os.FileInfo, io.ReaderAt, error) {
 }
 
 func (h *handler) Put(fileName string, content io.Reader, fileSize int64, mTime int64, aTime int64) (int64, error) {
-	cleanName := filepath.Base(fileName)
-	fpath := "/"
+	cmd := h.session.Command()
+	dir := cmd[len(cmd) - 1]
+	fpath := filepath.Join(dir, fileName)
+	fmt.Println("----")
+	fmt.Println(fpath)
+	fmt.Println(fileSize)
+	fmt.Println("----")
 	fileEntry := &utils.FileEntry{
-		Filepath: filepath.Join(fpath, cleanName),
+		Filepath: fpath,
 		Mode:     fs.FileMode(0600),
 		Size:     fileSize,
 		Mtime:    mTime,
