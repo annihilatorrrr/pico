@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.23 AS builder-deps
+FROM --platform=$BUILDPLATFORM golang:1.24 AS builder-deps
 LABEL maintainer="Pico Maintainers <hello@pico.sh>"
 
 WORKDIR /app
@@ -68,6 +68,8 @@ ARG APP=prose
 
 COPY --from=builder-ssh /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder-ssh /go/bin/${APP}-ssh ./ssh
+# some services require the html folder
+COPY --from=builder-ssh /app/${APP}/html ./${APP}/html
 
 
 ENTRYPOINT ["/app/ssh"]

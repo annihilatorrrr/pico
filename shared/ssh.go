@@ -9,17 +9,45 @@ import (
 )
 
 type SshAuthHandler struct {
-	DBPool db.DB
+	DB     AuthFindUser
 	Logger *slog.Logger
-	Cfg    *ConfigSite
 }
 
-func NewSshAuthHandler(dbpool db.DB, logger *slog.Logger, cfg *ConfigSite) *SshAuthHandler {
+type AuthFindUser interface {
+	FindUserByPubkey(key string) (*db.User, error)
+}
+
+func NewSshAuthHandler(dbh AuthFindUser, logger *slog.Logger) *SshAuthHandler {
 	return &SshAuthHandler{
-		DBPool: dbpool,
+		DB:     dbh,
 		Logger: logger,
-		Cfg:    cfg,
 	}
+}
+
+func (r *SshAuthHandler) PubkeyAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
+	pubkey := utils.KeyForKeyText(key)
+	user, err := r.DB.FindUserByPubkey(pubkey)
+	if err != nil {
+		r.Logger.Error(
+			"could not find user for key",
+			"keyType", key.Type(),
+			"key", key.Marshal(),
+			"err", err,
+		)
+		return false
+	}
+
+	if user.Name == "" {
+		r.Logger.Error("username is not set")
+		return false
+	}
+
+	if ctx.Permissions().Extensions == nil {
+		ctx.Permissions().Extensions = map[string]string{}
+	}
+	ctx.Permissions().Extensions["user_id"] = user.ID
+	ctx.Permissions().Extensions["pubkey"] = pubkey
+	return true
 }
 
 func FindPlusFF(dbpool db.DB, cfg *ConfigSite, userID string) *db.FeatureFlag {
@@ -40,29 +68,4 @@ func FindPlusFF(dbpool db.DB, cfg *ConfigSite, userID string) *db.FeatureFlag {
 	ff.Data.FileMax = ff.FindFileMax(cfg.MaxAssetSize)
 	ff.Data.SpecialFileMax = ff.FindSpecialFileMax(cfg.MaxSpecialFileSize)
 	return ff
-}
-
-func (r *SshAuthHandler) PubkeyAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
-	pubkey := utils.KeyForKeyText(key)
-	user, err := r.DBPool.FindUserForKey(ctx.User(), pubkey)
-	if err != nil {
-		r.Logger.Error(
-			"could not find user for key",
-			"key", key,
-			"err", err,
-		)
-		return false
-	}
-
-	if user.Name == "" {
-		r.Logger.Error("username is not set")
-		return false
-	}
-
-	if ctx.Permissions().Extensions == nil {
-		ctx.Permissions().Extensions = map[string]string{}
-	}
-	ctx.Permissions().Extensions["user_id"] = user.ID
-	ctx.Permissions().Extensions["pubkey"] = pubkey
-	return true
 }

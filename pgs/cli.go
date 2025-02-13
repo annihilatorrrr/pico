@@ -7,17 +7,19 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/picosh/pico/db"
+	pgsdb "github.com/picosh/pico/pgs/db"
 	"github.com/picosh/pico/shared"
 	"github.com/picosh/pico/tui/common"
 	sst "github.com/picosh/pobj/storage"
 	"github.com/picosh/utils"
 )
 
-func projectTable(styles common.Styles, projects []*db.Project, width int) *table.Table {
+func projectTable(projects []*db.Project, width int) *table.Table {
 	headers := []string{
 		"Name",
 		"Last Updated",
@@ -52,8 +54,8 @@ func projectTable(styles common.Styles, projects []*db.Project, width int) *tabl
 	return t
 }
 
-func getHelpText(styles common.Styles, userName string, width int) string {
-	helpStr := "Commands: [help, stats, ls, rm, link, unlink, prune, retain, depends, acl, cache]\n"
+func getHelpText(styles common.Styles, width int) string {
+	helpStr := "Commands: [help, stats, ls, fzf, rm, link, unlink, prune, retain, depends, acl, cache]\n"
 	helpStr += styles.Note.Render("NOTICE:") + " *must* append with `--write` for the changes to persist.\n"
 
 	projectName := "projA"
@@ -70,6 +72,10 @@ func getHelpText(styles common.Styles, userName string, width int) string {
 		{
 			"ls",
 			"lists projects",
+		},
+		{
+			fmt.Sprintf("fzf %s", projectName),
+			fmt.Sprintf("lists urls of all assets in %s", projectName),
 		},
 		{
 			fmt.Sprintf("rm %s", projectName),
@@ -120,12 +126,12 @@ type Cmd struct {
 	Session utils.CmdSession
 	Log     *slog.Logger
 	Store   sst.ObjectStorage
-	Dbpool  db.DB
+	Dbpool  pgsdb.PgsDB
 	Write   bool
 	Styles  common.Styles
 	Width   int
 	Height  int
-	Cfg     *shared.ConfigSite
+	Cfg     *PgsConfig
 }
 
 func (c *Cmd) output(out string) {
@@ -197,21 +203,11 @@ func (c *Cmd) RmProjectAssets(projectName string) error {
 }
 
 func (c *Cmd) help() {
-	c.output(getHelpText(c.Styles, c.User.Name, c.Width))
-}
-
-func (c *Cmd) statsByProject(_ string) error {
-	msg := fmt.Sprintf(
-		"%s\n\nRun %s to access pico's analytics TUI",
-		c.Styles.Logo.Render("DEPRECATED"),
-		c.Styles.Code.Render("ssh pico.sh"),
-	)
-	c.output(c.Styles.RoundedBorder.Render(msg))
-	return nil
+	c.output(getHelpText(c.Styles, c.Width))
 }
 
 func (c *Cmd) stats(cfgMaxSize uint64) error {
-	ff, err := c.Dbpool.FindFeatureForUser(c.User.ID, "plus")
+	ff, err := c.Dbpool.FindFeature(c.User.ID, "plus")
 	if err != nil {
 		ff = db.NewFeatureFlag(c.User.ID, "plus", cfgMaxSize, 0, 0)
 	}
@@ -220,7 +216,7 @@ func (c *Cmd) stats(cfgMaxSize uint64) error {
 	storageMax := ff.Data.StorageMax
 
 	bucketName := shared.GetAssetBucketName(c.User.ID)
-	bucket, err := c.Store.UpsertBucket(bucketName)
+	bucket, err := c.Store.GetBucket(bucketName)
 	if err != nil {
 		return err
 	}
@@ -250,9 +246,6 @@ func (c *Cmd) stats(cfgMaxSize uint64) error {
 		Rows(data)
 	c.output(t.String())
 
-	c.output("Site usage analytics:")
-	_ = c.statsByProject("")
-
 	return nil
 }
 
@@ -266,7 +259,7 @@ func (c *Cmd) ls() error {
 		c.output("no projects found")
 	}
 
-	t := projectTable(c.Styles, projects, c.Width)
+	t := projectTable(projects, c.Width)
 	c.output(t.String())
 
 	return nil
@@ -284,6 +277,37 @@ func (c *Cmd) unlink(projectName string) error {
 		return err
 	}
 	c.output(fmt.Sprintf("(%s) unlinked", project.Name))
+
+	return nil
+}
+
+func (c *Cmd) fzf(projectName string) error {
+	project, err := c.Dbpool.FindProjectByName(c.User.ID, projectName)
+	if err != nil {
+		return err
+	}
+
+	bucket, err := c.Store.GetBucket(shared.GetAssetBucketName(c.User.ID))
+	if err != nil {
+		return err
+	}
+
+	objs, err := c.Store.ListObjects(bucket, project.ProjectDir, true)
+	if err != nil {
+		return err
+	}
+
+	for _, obj := range objs {
+		if strings.Contains(obj.Name(), "._pico_keep_dir") {
+			continue
+		}
+		url := c.Cfg.AssetURL(
+			c.User.Name,
+			project.Name,
+			strings.TrimPrefix(obj.Name(), "/"),
+		)
+		c.output(url)
+	}
 
 	return nil
 }
@@ -352,7 +376,7 @@ func (c *Cmd) depends(projectName string) error {
 		return nil
 	}
 
-	t := projectTable(c.Styles, projects, c.Width)
+	t := projectTable(projects, c.Width)
 	c.output(t.String())
 
 	return nil
@@ -363,6 +387,10 @@ func (c *Cmd) depends(projectName string) error {
 func (c *Cmd) prune(prefix string, keepNumLatest int) error {
 	c.Log.Info("user running `clean` command", "user", c.User.Name, "prefix", prefix)
 	c.output(fmt.Sprintf("searching for projects that match prefix (%s) and are not linked to other projects", prefix))
+
+	if prefix == "prose" {
+		return fmt.Errorf("cannot delete `prose` because it is used by prose.sh and is protected")
+	}
 
 	if prefix == "" || prefix == "*" {
 		e := fmt.Errorf("must provide valid prefix")
@@ -440,6 +468,10 @@ func (c *Cmd) prune(prefix string, keepNumLatest int) error {
 
 func (c *Cmd) rm(projectName string) error {
 	c.Log.Info("user running `rm` command", "user", c.User.Name, "project", projectName)
+	if projectName == "prose" {
+		return fmt.Errorf("cannot delete `prose` because it is used by prose.sh and is protected")
+	}
+
 	project, err := c.Dbpool.FindProjectByName(c.User.ID, projectName)
 	if err == nil {
 		c.Log.Info("found project, checking dependencies", "project", projectName, "projectID", project.ID)
@@ -509,7 +541,14 @@ func (c *Cmd) cache(projectName string) error {
 }
 
 func (c *Cmd) cacheAll() error {
-	isAdmin := c.Dbpool.HasFeatureForUser(c.User.ID, "admin")
+	isAdmin := false
+	ff, _ := c.Dbpool.FindFeature(c.User.ID, "admin")
+	if ff != nil {
+		if ff.ExpiresAt.Before(time.Now()) {
+			isAdmin = true
+		}
+	}
+
 	if !isAdmin {
 		return fmt.Errorf("must be admin to use this command")
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"strconv"
@@ -16,7 +17,6 @@ import (
 	"github.com/gorilla/feeds"
 	"github.com/picosh/pico/db"
 	"github.com/picosh/pico/db/postgres"
-	"github.com/picosh/pico/imgs"
 	"github.com/picosh/pico/shared"
 	"github.com/picosh/pico/shared/storage"
 	"github.com/picosh/utils"
@@ -130,9 +130,11 @@ func blogStyleHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "blog not found", http.StatusNotFound)
 		return
 	}
+	logger = shared.LoggerWithUser(logger, user)
+
 	styles, err := dbpool.FindPostWithFilename("_styles.css", user.ID, cfg.Space)
 	if err != nil {
-		logger.Info("css not found", "user", username)
+		logger.Info("css not found")
 		http.Error(w, "css not found", http.StatusNotFound)
 		return
 	}
@@ -141,7 +143,7 @@ func blogStyleHandler(w http.ResponseWriter, r *http.Request) {
 
 	_, err = w.Write([]byte(styles.Text))
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("write to response writer", "err", err.Error())
 		http.Error(w, "server error", 500)
 	}
 }
@@ -158,6 +160,7 @@ func blogHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "blog not found", http.StatusNotFound)
 		return
 	}
+	logger = shared.LoggerWithUser(logger, user)
 
 	tag := r.URL.Query().Get("tag")
 	pager := &db.Pager{Num: 250, Page: 0}
@@ -170,15 +173,8 @@ func blogHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	posts = p.Data
 
-	byUpdated := strings.Contains(r.URL.Path, "live")
-	if byUpdated {
-		slices.SortFunc(posts, func(a *db.Post, b *db.Post) int {
-			return b.UpdatedAt.Compare(*a.UpdatedAt)
-		})
-	}
-
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("find posts", "err", err.Error())
 		http.Error(w, "could not fetch posts for blog", http.StatusInternalServerError)
 		return
 	}
@@ -192,7 +188,7 @@ func blogHandler(w http.ResponseWriter, r *http.Request) {
 	curl := shared.CreateURLFromRequest(cfg, r)
 
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("render template", "err", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -210,7 +206,7 @@ func blogHandler(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		parsedText, err := shared.ParseText(readme.Text)
 		if err != nil {
-			logger.Error(err.Error())
+			logger.Error("readme", "err", err.Error())
 		}
 		headerTxt.Bio = parsedText.Description
 		headerTxt.Layout = parsedText.Layout
@@ -282,7 +278,7 @@ func blogHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = ts.Execute(w, data)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("template execute", "err", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -302,6 +298,7 @@ func postRawHandler(w http.ResponseWriter, r *http.Request) {
 
 	dbpool := shared.GetDB(r)
 	logger := shared.GetLogger(r)
+	logger = logger.With("slug", slug)
 
 	user, err := dbpool.FindUserForName(username)
 	if err != nil {
@@ -309,6 +306,7 @@ func postRawHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "blog not found", http.StatusNotFound)
 		return
 	}
+	logger = shared.LoggerWithUser(logger, user)
 
 	post, err := dbpool.FindPostWithSlug(slug, user.ID, cfg.Space)
 	if err != nil {
@@ -321,7 +319,7 @@ func postRawHandler(w http.ResponseWriter, r *http.Request) {
 
 	_, err = w.Write([]byte(post.Text))
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("write to response writer", "err", err.Error())
 		http.Error(w, "server error", 500)
 	}
 }
@@ -349,6 +347,9 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger = shared.LoggerWithUser(logger, user)
+	logger = logger.With("slug", slug)
+
 	blogName := GetBlogName(username)
 	curl := shared.CreateURLFromRequest(cfg, r)
 
@@ -371,7 +372,7 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		footerParsed, err := shared.ParseText(footer.Text)
 		if err != nil {
-			logger.Error(err.Error())
+			logger.Error("footer", "err", err.Error())
 		}
 		footerHTML = template.HTML(footerParsed.Html)
 	}
@@ -381,7 +382,7 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		readmeParsed, err := shared.ParseText(readme.Text)
 		if err != nil {
-			logger.Error(err.Error())
+			logger.Error("readme", "err", err.Error())
 		}
 		if readmeParsed.MetaData.Title != "" {
 			blogName = readmeParsed.MetaData.Title
@@ -395,9 +396,10 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 	diff := ""
 	post, err := dbpool.FindPostWithSlug(slug, user.ID, cfg.Space)
 	if err == nil {
+		logger.Info("post found", "id", post.ID, "filename", post.FileSize)
 		parsedText, err := shared.ParseText(post.Text)
 		if err != nil {
-			logger.Error(err.Error())
+			logger.Error("find post with slug", "err", err.Error())
 		}
 
 		if parsedText.Image != "" {
@@ -438,14 +440,7 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 			WithStyles:   withStyles,
 		}
 	} else {
-		// TODO: HACK to support imgs slugs inside prose
-		// We definitely want to kill this feature in time
-		imgPost, err := imgs.FindImgPost(r, user, slug)
-		if err == nil && imgPost != nil {
-			imgs.ImgRequest(w, r)
-			return
-		}
-
+		logger.Info("post not found")
 		notFound, err := dbpool.FindPostWithFilename("_404.md", user.ID, cfg.Space)
 		contents := template.HTML("Oops!  we can't seem to find this post.")
 		title := "Post not found"
@@ -453,7 +448,7 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			notFoundParsed, err := shared.ParseText(notFound.Text)
 			if err != nil {
-				logger.Error(err.Error())
+				logger.Error("parse not found file", "err", err.Error())
 			}
 			if notFoundParsed.MetaData.Title != "" {
 				title = notFoundParsed.MetaData.Title
@@ -486,7 +481,6 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 			Contents:     contents,
 			Unlisted:     true,
 		}
-		logger.Info("post not found", "user", username, "slug", slug)
 		w.WriteHeader(http.StatusNotFound)
 	}
 
@@ -495,12 +489,14 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
+		logger.Error("render template", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 
+	logger.Info("executing template", "title", data.Title, "url", data.URL, "hasCSS", data.HasCSS)
 	err = ts.Execute(w, data)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("template", "err", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -521,7 +517,7 @@ func readHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("finding posts", "err", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -552,7 +548,7 @@ func readHandler(w http.ResponseWriter, r *http.Request) {
 
 	tags, err := dbpool.FindPopularTags(cfg.Space)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("find popular tags", "err", err.Error())
 	}
 
 	data := ReadPageData{
@@ -581,7 +577,7 @@ func readHandler(w http.ResponseWriter, r *http.Request) {
 
 	err = ts.Execute(w, data)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("template execute", "err", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -598,6 +594,8 @@ func rssBlogHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rss feed not found", http.StatusNotFound)
 		return
 	}
+	logger = shared.LoggerWithUser(logger, user)
+	logger.Info("fetching blog rss")
 
 	tag := r.URL.Query().Get("tag")
 	pager := &db.Pager{Num: 10, Page: 0}
@@ -611,14 +609,14 @@ func rssBlogHandler(w http.ResponseWriter, r *http.Request) {
 	posts = p.Data
 
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("find posts", "err", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	ts, err := template.ParseFiles(cfg.StaticPath("html/rss.page.tmpl"))
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("template parse file", "err", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -631,7 +629,7 @@ func rssBlogHandler(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		parsedText, err := shared.ParseText(readme.Text)
 		if err != nil {
-			logger.Error(err.Error())
+			logger.Error("readme", "err", err.Error())
 		}
 		if parsedText.Title != "" {
 			headerTxt.Title = parsedText.Title
@@ -644,13 +642,6 @@ func rssBlogHandler(w http.ResponseWriter, r *http.Request) {
 
 	curl := shared.CreateURLFromRequest(cfg, r)
 	blogUrl := cfg.FullBlogURL(curl, username)
-
-	byUpdated := strings.Contains(r.URL.Path, "live")
-	if byUpdated {
-		slices.SortFunc(posts, func(a *db.Post, b *db.Post) int {
-			return b.UpdatedAt.Compare(*a.UpdatedAt)
-		})
-	}
 
 	feed := &feeds.Feed{
 		Id:          blogUrl,
@@ -668,7 +659,7 @@ func rssBlogHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		parsed, err := shared.ParseText(post.Text)
 		if err != nil {
-			logger.Error(err.Error())
+			logger.Error("parse post text", "err", err.Error())
 		}
 
 		footer, err := dbpool.FindPostWithFilename("_footer.md", user.ID, cfg.Space)
@@ -676,7 +667,7 @@ func rssBlogHandler(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			footerParsed, err := shared.ParseText(footer.Text)
 			if err != nil {
-				logger.Error(err.Error())
+				logger.Error("parse footer text", "err", err.Error())
 			}
 			footerHTML = footerParsed.Html
 		}
@@ -691,10 +682,6 @@ func rssBlogHandler(w http.ResponseWriter, r *http.Request) {
 
 		realUrl := cfg.FullPostURL(curl, post.Username, post.Slug)
 		feedId := realUrl
-
-		if byUpdated {
-			feedId = fmt.Sprintf("%s:%s", realUrl, post.UpdatedAt.Format(time.RFC3339))
-		}
 
 		item := &feeds.Item{
 			Id:          feedId,
@@ -716,14 +703,14 @@ func rssBlogHandler(w http.ResponseWriter, r *http.Request) {
 
 	rss, err := feed.ToAtom()
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("feed to atom", "err", err.Error())
 		http.Error(w, "Could not generate atom rss feed", http.StatusInternalServerError)
 	}
 
 	w.Header().Add("Content-Type", "application/atom+xml; charset=utf-8")
 	_, err = w.Write([]byte(rss))
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("writing to response handler", "err", err.Error())
 	}
 }
 
@@ -734,14 +721,14 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 
 	pager, err := dbpool.FindAllPosts(&db.Pager{Num: 25, Page: 0}, cfg.Space)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("find all posts", "err", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	ts, err := template.ParseFiles(cfg.StaticPath("html/rss.page.tmpl"))
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("template parse file", "err", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -797,14 +784,14 @@ func rssHandler(w http.ResponseWriter, r *http.Request) {
 
 	rss, err := feed.ToAtom()
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("feed to atom", "err", err.Error())
 		http.Error(w, "Could not generate atom rss feed", http.StatusInternalServerError)
 	}
 
 	w.Header().Add("Content-Type", "application/atom+xml; charset=utf-8")
 	_, err = w.Write([]byte(rss))
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("write to response writer", "err", err.Error())
 	}
 }
 
@@ -815,14 +802,14 @@ func serveFile(file string, contentType string) http.HandlerFunc {
 
 		contents, err := os.ReadFile(cfg.StaticPath(fmt.Sprintf("public/%s", file)))
 		if err != nil {
-			logger.Error(err.Error())
+			logger.Error("read file", "err", err.Error())
 			http.Error(w, "file not found", 404)
 		}
 		w.Header().Add("Content-Type", contentType)
 
 		_, err = w.Write(contents)
 		if err != nil {
-			logger.Error(err.Error())
+			logger.Error("write to response writer", "err", err.Error())
 			http.Error(w, "server error", 500)
 		}
 	}
@@ -859,13 +846,41 @@ func createMainRoutes(staticRoutes []shared.Route) []shared.Route {
 	return routes
 }
 
+func imgRequest(w http.ResponseWriter, r *http.Request) {
+	logger := shared.GetLogger(r)
+	dbpool := shared.GetDB(r)
+	username := shared.GetUsernameFromRequest(r)
+	user, err := dbpool.FindUserForName(username)
+	if err != nil {
+		logger.Error("could not find user", "username", username)
+		http.Error(w, "could find user", http.StatusNotFound)
+		return
+	}
+	logger = shared.LoggerWithUser(logger, user)
+
+	destUrl, err := url.Parse(fmt.Sprintf("https://%s-prose.pgs.sh%s", username, r.URL.Path))
+	if err != nil {
+		logger.Error("could not parse image proxy url", "username", username)
+		http.Error(w, "could not parse image proxy url", http.StatusInternalServerError)
+		return
+	}
+	logger.Info("proxy image request", "url", destUrl.String())
+
+	proxy := httputil.NewSingleHostReverseProxy(destUrl)
+	oldDirector := proxy.Director
+	proxy.Director = func(r *http.Request) {
+		oldDirector(r)
+		r.Host = destUrl.Host
+		r.URL = destUrl
+	}
+	proxy.ServeHTTP(w, r)
+}
+
 func createSubdomainRoutes(staticRoutes []shared.Route) []shared.Route {
 	routes := []shared.Route{
 		shared.NewRoute("GET", "/", blogHandler),
-		shared.NewRoute("GET", "/live", blogHandler),
 		shared.NewRoute("GET", "/_styles.css", blogStyleHandler),
 		shared.NewRoute("GET", "/rss", rssBlogHandler),
-		shared.NewRoute("GET", "/live/rss", rssBlogHandler),
 		shared.NewRoute("GET", "/rss.xml", rssBlogHandler),
 		shared.NewRoute("GET", "/atom.xml", rssBlogHandler),
 		shared.NewRoute("GET", "/feed.xml", rssBlogHandler),
@@ -881,9 +896,10 @@ func createSubdomainRoutes(staticRoutes []shared.Route) []shared.Route {
 	routes = append(
 		routes,
 		shared.NewRoute("GET", "/raw/(.+)", postRawHandler),
-		shared.NewRoute("GET", "/([^/]+)/(.+)", imgs.ImgRequest),
-		shared.NewRoute("GET", "/(.+.(?:jpg|jpeg|png|gif|webp|svg))$", imgs.ImgRequest),
-		shared.NewRoute("GET", "/i", imgs.ImgsListHandler),
+		shared.NewRoute("GET", "/(.+).md", postRawHandler),
+		shared.NewRoute("GET", "/(.+.(?:jpg|jpeg|png|gif|webp|svg))/(.+)", imgRequest),
+		shared.NewRoute("GET", "/(.+.(?:jpg|jpeg|png|gif|webp|svg))$", imgRequest),
+		shared.NewRoute("GET", "/(.+).html", postHandler),
 		shared.NewRoute("GET", "/(.+)", postHandler),
 	)
 

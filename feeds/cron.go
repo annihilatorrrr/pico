@@ -63,6 +63,7 @@ type DigestFeed struct {
 	Feeds        []*Feed
 	Options      DigestOptions
 	KeepAliveURL string
+	UnsubURL     string
 	DaysLeft     string
 	ShowBanner   bool
 }
@@ -81,7 +82,7 @@ func itemToTemplate(item *gofeed.Item) *FeedItemTmpl {
 	}
 }
 
-func digestOptionToTime(lastDigest time.Time, interval string) time.Time {
+func DigestOptionToTime(lastDigest time.Time, interval string) time.Time {
 	day := 24 * time.Hour
 	if interval == "10min" {
 		return lastDigest.Add(10 * time.Minute)
@@ -102,10 +103,19 @@ func digestOptionToTime(lastDigest time.Time, interval string) time.Time {
 	}
 }
 
+func getFeedItemID(logger *slog.Logger, item *gofeed.Item) string {
+	guid := item.GUID
+	if item.GUID == "" {
+		logger.Info("no <guid> found for feed item, using <link> instead for its unique id")
+		return item.Link
+	}
+	return guid
+}
+
 // see if this feed item should be emailed to user.
-func isValidItem(item *gofeed.Item, feedItems []*db.FeedItem) bool {
+func isValidItem(logger *slog.Logger, item *gofeed.Item, feedItems []*db.FeedItem) bool {
 	for _, feedItem := range feedItems {
-		if item.GUID == feedItem.GUID {
+		if getFeedItemID(logger, item) == feedItem.GUID {
 			return false
 		}
 	}
@@ -140,14 +150,14 @@ func (f *Fetcher) Validate(post *db.Post, parsed *shared.ListParsedText) error {
 		}
 	}
 
-	digestAt := digestOptionToTime(*lastDigest, parsed.DigestInterval)
+	digestAt := DigestOptionToTime(*lastDigest, parsed.DigestInterval)
 	if digestAt.After(now) {
 		return fmt.Errorf("(%s) not time to digest, skipping", digestAt.Format(time.RFC3339))
 	}
 	return nil
 }
 
-func (f *Fetcher) RunPost(logger *slog.Logger, user *db.User, post *db.Post) error {
+func (f *Fetcher) RunPost(logger *slog.Logger, user *db.User, post *db.Post, skipValidation bool) error {
 	logger = logger.With("filename", post.Filename)
 	logger.Info("running feed post")
 
@@ -165,7 +175,11 @@ func (f *Fetcher) RunPost(logger *slog.Logger, user *db.User, post *db.Post) err
 	err := f.Validate(post, parsed)
 	if err != nil {
 		logger.Info("validation failed", "err", err)
-		return nil
+		if skipValidation {
+			logger.Info("overriding validation error, continuing")
+		} else {
+			return nil
+		}
 	}
 
 	urls := []string{}
@@ -187,6 +201,7 @@ func (f *Fetcher) RunPost(logger *slog.Logger, user *db.User, post *db.Post) err
 			continue
 		}
 
+		logger.Info("found rss feed url", "url", u)
 		urls = append(urls, u)
 	}
 
@@ -214,14 +229,15 @@ func (f *Fetcher) RunPost(logger *slog.Logger, user *db.User, post *db.Post) err
 		post.Data.Attempts += 1
 		logger.Error("could not fetch urls", "err", err, "attempts", post.Data.Attempts)
 
-		errBody := fmt.Sprintf(`There was an error attempting to fetch your feeds (%d) times.  After (5) attempts we remove the file from our system.  Please check all the URLs and re-upload.
+		maxAttempts := 10
+		errBody := fmt.Sprintf(`There was an error attempting to fetch your feeds (%d) times.  After (%d) attempts we remove the file from our system.  Please check all the URLs and re-upload.
 Also, we have centralized logs in our pico.sh TUI that will display realtime feed errors so you can debug.
 
 
 %s
 
 
-%s`, post.Data.Attempts, errForUser.Error(), post.Text)
+%s`, post.Data.Attempts, maxAttempts, errForUser.Error(), post.Text)
 		err = f.SendEmail(
 			logger, user.Name,
 			parsed.Email,
@@ -232,7 +248,7 @@ Also, we have centralized logs in our pico.sh TUI that will display realtime fee
 			return err
 		}
 
-		if post.Data.Attempts >= 5 {
+		if post.Data.Attempts >= maxAttempts {
 			err = f.db.RemovePosts([]string{post.ID})
 			if err != nil {
 				return err
@@ -280,7 +296,7 @@ func (f *Fetcher) RunUser(user *db.User) error {
 	}
 
 	for _, post := range posts.Data {
-		err = f.RunPost(logger, user, post)
+		err = f.RunPost(logger, user, post, false)
 		if err != nil {
 			logger.Error("run post failed", "err", err)
 		}
@@ -340,7 +356,8 @@ func (f *Fetcher) Fetch(logger *slog.Logger, fp *gofeed.Parser, url string, user
 			continue
 		}
 
-		if !isValidItem(item, feedItems) {
+		if !isValidItem(logger, item, feedItems) {
+			logger.Info("feed item already served", "guid", item.GUID)
 			continue
 		}
 
@@ -403,6 +420,7 @@ type MsgBody struct {
 }
 
 func (f *Fetcher) FetchAll(logger *slog.Logger, urls []string, inlineContent bool, username string, post *db.Post) (*MsgBody, error) {
+	logger.Info("fetching feeds", "inlineContent", inlineContent)
 	fp := gofeed.NewParser()
 	daysLeft := ""
 	showBanner := false
@@ -416,6 +434,7 @@ func (f *Fetcher) FetchAll(logger *slog.Logger, urls []string, inlineContent boo
 	}
 	feeds := &DigestFeed{
 		KeepAliveURL: fmt.Sprintf("https://feeds.pico.sh/keep-alive/%s", post.ID),
+		UnsubURL:     fmt.Sprintf("https://feeds.pico.sh/unsub/%s", post.ID),
 		DaysLeft:     daysLeft,
 		ShowBanner:   showBanner,
 		Options:      DigestOptions{InlineContent: inlineContent},
@@ -454,9 +473,10 @@ func (f *Fetcher) FetchAll(logger *slog.Logger, urls []string, inlineContent boo
 	fdi := []*db.FeedItem{}
 	for _, feed := range feeds.Feeds {
 		for _, item := range feed.FeedItems {
+			uid := getFeedItemID(logger, item)
 			fdi = append(fdi, &db.FeedItem{
 				PostID: post.ID,
-				GUID:   item.GUID,
+				GUID:   uid,
 				Data: db.FeedItemData{
 					Title:       item.Title,
 					Description: item.Description,

@@ -5,6 +5,8 @@ import (
 	"github.com/picosh/utils"
 )
 
+var MAX_FILE_SIZE = 3 * utils.MB
+
 func NewConfigSite() *shared.ConfigSite {
 	debug := utils.GetEnv("PROSE_DEBUG", "0")
 	domain := utils.GetEnv("PROSE_DOMAIN", "prose.sh")
@@ -15,7 +17,7 @@ func NewConfigSite() *shared.ConfigSite {
 	minioUser := utils.GetEnv("MINIO_ROOT_USER", "")
 	minioPass := utils.GetEnv("MINIO_ROOT_PASSWORD", "")
 	dbURL := utils.GetEnv("DATABASE_URL", "")
-	maxSize := uint64(500 * utils.MB)
+	maxSize := uint64(25 * utils.MB)
 	maxImgSize := int64(10 * utils.MB)
 
 	return &shared.ConfigSite{

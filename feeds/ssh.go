@@ -34,6 +34,7 @@ func createRouter(handler *filehandlers.FileHandlerRouter) proxy.Router {
 			wishrsync.Middleware(handler),
 			auth.Middleware(handler),
 			wsh.PtyMdw(wsh.DeprecatedNotice()),
+			WishMiddleware(handler.DBPool, handler.Cfg),
 			wsh.LogMiddleware(handler.GetLogger()),
 		}
 	}
@@ -69,7 +70,7 @@ func StartSshServer() {
 	}
 	handler := filehandlers.NewFileHandlerRouter(cfg, dbh, fileMap)
 
-	sshAuth := shared.NewSshAuthHandler(dbh, logger, cfg)
+	sshAuth := shared.NewSshAuthHandler(dbh, logger)
 	s, err := wish.NewServer(
 		wish.WithAddress(fmt.Sprintf("%s:%s", host, port)),
 		wish.WithHostKeyPath("ssh_data/term_info_ed25519"),

@@ -541,13 +541,17 @@ func AddPlusFeedForUser(dbpool db.DB, userID, email string) error {
 	href := fmt.Sprintf("https://auth.pico.sh/rss/%s", token)
 	text := fmt.Sprintf(`=: email %s
 =: digest_interval 1day
-=> %s`, email, href)
+=: inline_content true
+=> %s
+=> https://blog.pico.sh/rss`, email, href)
+	now := time.Now()
 	_, err = dbpool.InsertPost(&db.Post{
-		UserID:   userID,
-		Text:     text,
-		Space:    "feeds",
-		Slug:     "pico-plus",
-		Filename: "pico-plus",
+		UserID:    userID,
+		Text:      text,
+		Space:     "feeds",
+		Slug:      "pico-plus",
+		Filename:  "pico-plus",
+		PublishAt: &now,
 	})
 	return err
 }
@@ -688,13 +692,16 @@ func metricDrainSub(ctx context.Context, dbpool db.DB, logger *slog.Logger, secr
 
 	for {
 		scanner := bufio.NewScanner(drain)
+		scanner.Buffer(make([]byte, 32*1024), 32*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
 			clean := strings.TrimSpace(line)
 
+			fmt.Println(line)
+
 			visit, err := accessLogToVisit(dbpool, clean)
 			if err != nil {
-				logger.Error("could not convert access log to a visit", "err", err)
+				logger.Info("could not convert access log to a visit", "err", err)
 				continue
 			}
 
