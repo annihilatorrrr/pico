@@ -104,7 +104,7 @@ func (m *MenuPage) Draw(ctx vxfw.DrawContext) (vxfw.Surface, error) {
 		},
 	})
 
-	services, _ := NewServicesList(m.shared.PlusFeatureFlag).Draw(ctx)
+	services, _ := NewServicesList(m.shared.PlusFeatureFlag, m.shared.PgsFeatureFlag).Draw(ctx)
 	features, _ := m.features.Draw(ctx)
 
 	leftPane := NewGroupStack([]vxfw.Surface{

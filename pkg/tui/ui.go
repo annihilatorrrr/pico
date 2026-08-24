@@ -30,6 +30,7 @@ type SharedModel struct {
 	User               *db.User
 	PlusFeatureFlag    *db.FeatureFlag
 	BouncerFeatureFlag *db.FeatureFlag
+	PgsFeatureFlag     *db.FeatureFlag
 	Impersonator       string
 	App                *vxfw.App
 }
@@ -276,6 +277,9 @@ func initData(shrd *SharedModel) error {
 
 	bff, _ := FindFeatureFlag(shrd, "bouncer")
 	shrd.BouncerFeatureFlag = bff
+
+	pff, _ := FindFeatureFlag(shrd, "pgs")
+	shrd.PgsFeatureFlag = pff
 	return nil
 }
 

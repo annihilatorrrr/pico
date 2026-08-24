@@ -153,11 +153,12 @@ func (m *FeaturesList) getFeaturesKv() []Kv {
 }
 
 type ServicesList struct {
-	ff *db.FeatureFlag
+	plusFf *db.FeatureFlag
+	pgsFf  *db.FeatureFlag
 }
 
-func NewServicesList(ff *db.FeatureFlag) *ServicesList {
-	return &ServicesList{ff}
+func NewServicesList(plusFf *db.FeatureFlag, pgsFf *db.FeatureFlag) *ServicesList {
+	return &ServicesList{plusFf: plusFf, pgsFf: pgsFf}
 }
 
 func (m *ServicesList) HandleEvent(ev vaxis.Event, phase vxfw.EventPhase) (vxfw.Command, error) {
@@ -180,18 +181,23 @@ func (m *ServicesList) Draw(ctx vxfw.DrawContext) (vxfw.Surface, error) {
 }
 
 func (m *ServicesList) getServiceKv() []Kv {
-	hasPlus := m.ff != nil
+	hasPlus := m.plusFf != nil && m.plusFf.IsValid()
+	hasPgs := m.pgsFf != nil && m.pgsFf.IsValid()
+	pagesStatus := "pico+"
+	if hasPlus || hasPgs {
+		pagesStatus = "active"
+	}
 	data := [][]string{
 		{"name", "status"},
 		{"prose", "active"},
 		{"pipe", "active"},
 		{"pastes", "active"},
+		{"pages", pagesStatus},
 	}
 
 	if hasPlus {
 		data = append(
 			data,
-			[]string{"pages", "active"},
 			[]string{"tuns", "active"},
 			[]string{"irc bouncer", "active"},
 			[]string{"rss-to-email", "active"},
@@ -199,7 +205,6 @@ func (m *ServicesList) getServiceKv() []Kv {
 	} else {
 		data = append(
 			data,
-			[]string{"pages", "pico+"},
 			[]string{"tuns", "pico+"},
 			[]string{"irc bouncer", "pico+"},
 			[]string{"rss-to-email", "pico+"},
