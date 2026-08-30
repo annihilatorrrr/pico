@@ -85,7 +85,9 @@
 
 	handle @webmetrics {
 		rewrite * /_metrics
-		reverse_proxy web:3000
+		reverse_proxy web:3000 {
+			header_up Host {$APP_DOMAIN}
+		}
 	}
 
 	@imgproxymetrics {
