@@ -2337,7 +2337,25 @@ func TestSSH_WildcardSub(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for subscriber to be registered in the PubSub broker
+	subReady := false
+	for i := 0; i < 100; i++ {
+		for topic, ch := range server.PipeHandler.PubSub.GetChannels() {
+			if topic == "alice/metric-drain*" {
+				for range ch.GetClients() {
+					subReady = true
+					break
+				}
+			}
+		}
+		if subReady {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !subReady {
+		t.Fatal("timed out waiting for wildcard subscriber to register")
+	}
 
 	// 2. Publish to "metric-drain-pgs"
 	pubClient1, err := user.NewClient()
@@ -2375,12 +2393,20 @@ func TestSSH_WildcardSub(t *testing.T) {
 	}()
 	_ = pubSession2.Run("pub metric-drain-prose -b=false")
 
-	time.Sleep(150 * time.Millisecond)
-	_ = subSession.Close()
+	// Wait for both events to be received by the subscriber
+	deadline := time.Now().Add(5 * time.Second)
+	var output string
+	for time.Now().Before(deadline) {
+		bufMu.Lock()
+		output = buf.String()
+		bufMu.Unlock()
+		if strings.Contains(output, "pgs-event") && strings.Contains(output, "prose-event") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
-	bufMu.Lock()
-	output := buf.String()
-	bufMu.Unlock()
+	_ = subSession.Close()
 
 	if !strings.Contains(output, "pgs-event") {
 		t.Errorf("expected SSH wildcard subscriber output to contain 'pgs-event', got: %q", output)
