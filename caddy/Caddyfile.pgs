@@ -60,7 +60,7 @@
 	}
 
 	@caddymetrics {
-		host {$APP_DOMAIN}
+		host {$APP_DOMAIN} *.{$APP_DOMAIN}
 		path /_caddy/metrics
 	}
 
@@ -69,7 +69,7 @@
 	}
 
 	@sshmetrics {
-		host {$APP_DOMAIN}
+		host {$APP_DOMAIN} *.{$APP_DOMAIN}
 		path /_ssh/metrics
 	}
 
@@ -79,7 +79,7 @@
 	}
 
 	@webmetrics {
-		host {$APP_DOMAIN}
+		host {$APP_DOMAIN} *.{$APP_DOMAIN}
 		path /_web/metrics
 	}
 
@@ -89,7 +89,7 @@
 	}
 
 	@imgproxymetrics {
-		host {$APP_DOMAIN}
+		host {$APP_DOMAIN} *.{$APP_DOMAIN}
 		path /_imgproxy/metrics
 	}
 
