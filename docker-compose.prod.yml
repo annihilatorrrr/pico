@@ -212,6 +212,7 @@ services:
         condition: service_healthy
     profiles:
       - pgs
+      - pgs-cdn
       - caddy
       - all
     logging:
