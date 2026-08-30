@@ -21,7 +21,7 @@ func findFeatureFlag(dbpool pgsdb.PgsDB, cfg *PgsConfig, userID string) (*db.Fea
 			setFeatureLimits(ff, cfg)
 			return ff, nil
 		}
-		err = fmt.Errorf("your pico+ has expired")
+		err = fmt.Errorf("ERROR: your pico+ has expired, https://blog.pico.sh/ann-037-pgs-pico-plus-only")
 	}
 
 	ffPgs, pgsErr := dbpool.FindFeature(userID, "pgs")
@@ -30,14 +30,14 @@ func findFeatureFlag(dbpool pgsdb.PgsDB, cfg *PgsConfig, userID string) (*db.Fea
 			setFeatureLimits(ffPgs, cfg)
 			return ffPgs, nil
 		}
-		pgsErr = fmt.Errorf("your pgs access has expired")
+		pgsErr = fmt.Errorf("ERROR: your pgs access has expired, https://blog.pico.sh/ann-037-pgs-pico-plus-only")
 	}
 
 	if err != nil && strings.Contains(err.Error(), "expired") {
 		return nil, err
 	}
-	if pgsErr != nil {
+	if pgsErr != nil && strings.Contains(pgsErr.Error(), "expired") {
 		return nil, pgsErr
 	}
-	return nil, err
+	return nil, fmt.Errorf("ERROR: uploading to pgs requires pico+, https://blog.pico.sh/ann-037-pgs-pico-plus-only")
 }
